@@ -13,17 +13,29 @@ import {
   Archive,
   ChevronRight,
   AlertTriangle,
+  Server,
+  Globe,
+  CheckCircle2,
+  XCircle,
+  Play,
+  Copy,
 } from "lucide-react";
-import { investigationsAPI, type Investigation, type Playbook, type AIAnalysis } from "@/lib/api";
+import {
+  investigationsAPI,
+  type Investigation,
+  type InvestigationTimeline,
+  type PlaybookYamlResponse,
+} from "@/lib/api";
 import { useWSSubscription, type WSMessage } from "@/lib/websocket";
 import { PageHeader } from "@/components/page-header";
+import { SeverityBadge } from "@/components/severity-badge";
 import { StatusBadge } from "@/components/status-badge";
-import { PlaybookViewer } from "@/components/playbook-viewer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -38,85 +50,106 @@ import { cn } from "@/lib/utils";
 // Mock data
 const mockInvestigation: Investigation = {
   id: "investigation-1",
-  investigation_id: "INV-2024-0001",
+  incident_id: "inc-001",
+  incident_title: "ET SCAN Potential SSH Scan - 172.104.13.54 on ghazi",
+  incident_severity: "high",
+  status: "awaiting_approval",
+  severity: "high",
+  source_ips: ["117.50.130.90", "103.45.67.89", "45.33.32.156"],
+  ai_summary:
+    "AI analysis detected a coordinated SSH brute force attack targeting production servers. The attack originated from multiple IP addresses across different geographic regions, suggesting a botnet-driven campaign.",
+  ai_narrative:
+    "The attack began at 14:32 UTC with initial probing attempts from 117.50.130.90 (CN). Within 15 minutes, the attack escalated to include 47 unique source IPs, suggesting botnet involvement. The attack targeted root and admin accounts with a rate of 150+ attempts per minute. Pattern analysis indicates similarity to known Mirai botnet signatures.",
+  ai_risk:
+    "HIGH SEVERITY - Coordinated brute force attack with potential for lateral movement if successful authentication is achieved. Immediate action required to block attacking IPs and harden SSH configuration.",
+  playbook_yaml: `---
+- name: SSH Brute Force Response Playbook
+  hosts: ghazi
+  become: yes
+  vars:
+    attacking_ips:
+      - 117.50.130.90
+      - 103.45.67.89
+      - 45.33.32.156
+  
+  tasks:
+    - name: Block attacking IPs with iptables
+      iptables:
+        chain: INPUT
+        source: "{{ item }}"
+        jump: DROP
+      loop: "{{ attacking_ips }}"
+      
+    - name: Configure fail2ban for SSH
+      template:
+        src: fail2ban-ssh.conf.j2
+        dest: /etc/fail2ban/jail.d/ssh.conf
+      notify: restart fail2ban
+      
+    - name: Disable password authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: restart sshd
+      
+    - name: Generate incident report
+      template:
+        src: incident-report.md.j2
+        dest: "/var/log/security/incident-{{ ansible_date_time.iso8601 }}.md"
+        
+  handlers:
+    - name: restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted
+        
+    - name: restart sshd
+      service:
+        name: sshd
+        state: restarted`,
+  playbook_valid: true,
+  playbook_error: null,
+  target_host: "ghazi",
   created_at: new Date(Date.now() - 5400000).toISOString(),
   updated_at: new Date(Date.now() - 1800000).toISOString(),
-  status: "awaiting_approval",
-  incident_id: "INC-2024-0001",
-  summary:
-    "AI analysis detected a coordinated SSH brute force attack targeting production servers. The attack originated from multiple IP addresses across different geographic regions, suggesting a botnet-driven campaign. Recommended immediate actions include blocking attacking IPs, implementing rate limiting, and auditing SSH configurations.",
-  ai_analysis: {
-    threat_assessment:
-      "HIGH SEVERITY - Coordinated brute force attack with potential for lateral movement if successful authentication is achieved.",
-    confidence: 94,
-    indicators: [
-      "Multiple failed SSH attempts from 47 unique IP addresses",
-      "Geographic distribution suggests botnet activity",
-      "Attack rate of 150+ attempts per minute",
-      "Targeting root and admin accounts",
-      "Pattern matches known Mirai botnet signature",
-    ],
-    recommendations: [
-      "Block attacking IP ranges at firewall level",
-      "Implement fail2ban with aggressive banning",
-      "Enable SSH key-only authentication",
-      "Add geographic restrictions to SSH access",
-      "Review and audit user accounts",
-    ],
-    timeline: [
-      { timestamp: new Date(Date.now() - 5400000).toISOString(), event: "First attack detected", severity: "warning" },
-      { timestamp: new Date(Date.now() - 4800000).toISOString(), event: "Attack rate increased to 50/min", severity: "warning" },
-      { timestamp: new Date(Date.now() - 3600000).toISOString(), event: "Attack rate peaked at 150/min", severity: "critical" },
-      { timestamp: new Date(Date.now() - 2700000).toISOString(), event: "AI analysis initiated", severity: "info" },
-      { timestamp: new Date(Date.now() - 1800000).toISOString(), event: "Playbook generated", severity: "info" },
-    ],
-  },
 };
 
-const mockPlaybook: Playbook = {
-  id: "playbook-1",
-  name: "SSH Brute Force Response",
-  description:
-    "Automated response playbook for SSH brute force attacks including IP blocking, rate limiting, and configuration hardening.",
-  status: "pending",
-  steps: [
+const mockTimeline: InvestigationTimeline = {
+  investigation_id: "investigation-1",
+  events: [
     {
-      id: "step-1",
-      order: 1,
-      action: "Block Attacking IPs",
-      description: "Add identified malicious IPs to firewall blocklist using iptables rules",
-      status: "pending",
+      type: "created",
+      timestamp: new Date(Date.now() - 5400000).toISOString(),
+      description: "Investigation created",
     },
     {
-      id: "step-2",
-      order: 2,
-      action: "Enable Rate Limiting",
-      description: "Configure fail2ban with 5 attempts / 10 minute window and 24 hour ban",
-      status: "pending",
+      type: "ai_started",
+      timestamp: new Date(Date.now() - 5000000).toISOString(),
+      description: "AI analysis started",
     },
     {
-      id: "step-3",
-      order: 3,
-      action: "Audit SSH Configuration",
-      description: "Review and update sshd_config to disable password authentication",
-      status: "pending",
-    },
-    {
-      id: "step-4",
-      order: 4,
-      action: "Generate Security Report",
-      description: "Create detailed incident report with IOCs and remediation steps",
-      status: "pending",
-    },
-    {
-      id: "step-5",
-      order: 5,
-      action: "Notify Security Team",
-      description: "Send alert to SOC team via Slack and email with investigation summary",
-      status: "pending",
+      type: "ai_completed",
+      timestamp: new Date(Date.now() - 3600000).toISOString(),
+      playbook_generated: true,
+      description: "AI analysis completed - playbook generated",
     },
   ],
 };
+
+function getEventConfig(type: string) {
+  const configs: Record<string, { color: string; label: string }> = {
+    created: { color: "bg-primary", label: "Created" },
+    ai_started: { color: "bg-blue-500", label: "AI Started" },
+    ai_completed: { color: "bg-emerald-500", label: "AI Completed" },
+    approved: { color: "bg-emerald-500", label: "Approved" },
+    declined: { color: "bg-destructive", label: "Declined" },
+    remediation_started: { color: "bg-blue-500", label: "Remediation Started" },
+    remediation_completed: { color: "bg-emerald-500", label: "Remediation Complete" },
+    archived: { color: "bg-muted-foreground", label: "Archived" },
+  };
+  return configs[type] || { color: "bg-muted-foreground", label: type };
+}
 
 export default function InvestigationDetailPage({
   params,
@@ -125,9 +158,8 @@ export default function InvestigationDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
-  const [showArchiveDialog, setShowArchiveDialog] = useState(false);
-  const [resolution, setResolution] = useState("");
-  const [lessonsLearned, setLessonsLearned] = useState("");
+  const [showDeclineDialog, setShowDeclineDialog] = useState(false);
+  const [declineReason, setDeclineReason] = useState("");
   const [isActioning, setIsActioning] = useState(false);
 
   const { data: investigation, isLoading, mutate } = useSWR(
@@ -135,14 +167,17 @@ export default function InvestigationDetailPage({
     () => investigationsAPI.get(id).catch(() => mockInvestigation)
   );
 
-  const { data: playbook } = useSWR(
-    ["investigation-playbook", id],
-    () => investigationsAPI.getPlaybook(id).catch(() => mockPlaybook)
+  const { data: timeline } = useSWR(
+    ["investigation-timeline", id],
+    () => investigationsAPI.getTimeline(id).catch(() => mockTimeline)
   );
 
-  const handleWSUpdate = useCallback((message: WSMessage) => {
-    mutate();
-  }, [mutate]);
+  const handleWSUpdate = useCallback(
+    (message: WSMessage) => {
+      mutate();
+    },
+    [mutate]
+  );
 
   useWSSubscription("investigation_updated", handleWSUpdate);
   useWSSubscription("playbook_status_changed", handleWSUpdate);
@@ -150,22 +185,24 @@ export default function InvestigationDetailPage({
   const handleApprove = async () => {
     setIsActioning(true);
     try {
-      await investigationsAPI.approvePlaybook(id);
+      await investigationsAPI.approve(id, "admin");
       mutate();
     } catch (error) {
-      console.error("Failed to approve playbook:", error);
+      console.error("Failed to approve investigation:", error);
     } finally {
       setIsActioning(false);
     }
   };
 
-  const handleDecline = async (reason: string) => {
+  const handleDecline = async () => {
     setIsActioning(true);
     try {
-      await investigationsAPI.declinePlaybook(id, reason);
+      await investigationsAPI.decline(id, "admin", declineReason);
       mutate();
+      setShowDeclineDialog(false);
+      setDeclineReason("");
     } catch (error) {
-      console.error("Failed to decline playbook:", error);
+      console.error("Failed to decline investigation:", error);
     } finally {
       setIsActioning(false);
     }
@@ -174,7 +211,7 @@ export default function InvestigationDetailPage({
   const handleExecute = async () => {
     setIsActioning(true);
     try {
-      await investigationsAPI.executePlaybook(id);
+      await investigationsAPI.execute(id);
       mutate();
     } catch (error) {
       console.error("Failed to execute playbook:", error);
@@ -183,20 +220,8 @@ export default function InvestigationDetailPage({
     }
   };
 
-  const handleArchive = async () => {
-    setIsActioning(true);
-    try {
-      await investigationsAPI.archive(id, {
-        resolution,
-        lessons_learned: lessonsLearned || undefined,
-      });
-      router.push("/archives");
-    } catch (error) {
-      console.error("Failed to archive investigation:", error);
-    } finally {
-      setIsActioning(false);
-      setShowArchiveDialog(false);
-    }
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
   };
 
   if (isLoading) {
@@ -208,25 +233,39 @@ export default function InvestigationDetailPage({
   }
 
   const data = investigation || mockInvestigation;
-  const playbookData = playbook || mockPlaybook;
-  const analysis = data.ai_analysis;
+  const timelineEvents = timeline?.events || mockTimeline.events;
 
   const canApprove = data.status === "awaiting_approval";
-  const canExecute = data.status === "completed" && playbookData.status === "approved";
-  const canArchive = data.status === "completed";
+  const canExecute = data.status === "approved";
 
   return (
     <div className="flex flex-col">
       <PageHeader
-        title={data.investigation_id}
-        description={`Investigation for ${data.incident_id}`}
+        title={data.incident_title}
+        description={`Investigation for incident ${data.incident_id}`}
         onRefresh={() => mutate()}
         actions={
           <div className="flex items-center gap-2">
-            {canArchive && (
-              <Button variant="outline" onClick={() => setShowArchiveDialog(true)}>
-                <Archive className="mr-2 h-4 w-4" />
-                Archive
+            {canApprove && (
+              <>
+                <Button
+                  variant="destructive"
+                  onClick={() => setShowDeclineDialog(true)}
+                  disabled={isActioning}
+                >
+                  <XCircle className="mr-2 h-4 w-4" />
+                  Decline
+                </Button>
+                <Button onClick={handleApprove} disabled={isActioning}>
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  Approve Playbook
+                </Button>
+              </>
+            )}
+            {canExecute && (
+              <Button onClick={handleExecute} disabled={isActioning}>
+                <Play className="mr-2 h-4 w-4" />
+                Execute Playbook
               </Button>
             )}
             <Button variant="outline" onClick={() => router.back()}>
@@ -239,14 +278,20 @@ export default function InvestigationDetailPage({
 
       <div className="flex-1 space-y-6 p-6">
         {/* Status Bar */}
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
           <Card>
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  <StatusBadge status={data.status} />
-                </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Status</p>
+                <StatusBadge status={data.status} />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Severity</p>
+                <SeverityBadge severity={data.severity || data.incident_severity || "medium"} />
               </div>
             </CardContent>
           </Card>
@@ -254,31 +299,27 @@ export default function InvestigationDetailPage({
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">AI Confidence</p>
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl font-bold">
-                      {analysis?.confidence || 0}%
-                    </span>
-                    <Brain className="h-5 w-5 text-primary" />
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Related Incident</p>
-                  <Badge
-                    variant="outline"
-                    className="cursor-pointer font-mono"
-                    onClick={() => router.push(`/incidents/${data.incident_id}`)}
-                  >
-                    {data.incident_id}
-                    <ChevronRight className="ml-1 h-3 w-3" />
+                  <p className="text-sm text-muted-foreground">Target Host</p>
+                  <Badge variant="secondary">
+                    <Server className="mr-1 h-3 w-3" />
+                    {data.target_host || "Unknown"}
                   </Badge>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Incident</p>
+                <Badge
+                  variant="outline"
+                  className="cursor-pointer font-mono"
+                  onClick={() => router.push(`/incidents/${data.incident_id}`)}
+                >
+                  {data.incident_id}
+                  <ChevronRight className="ml-1 h-3 w-3" />
+                </Badge>
               </div>
             </CardContent>
           </Card>
@@ -297,187 +338,227 @@ export default function InvestigationDetailPage({
           </Card>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* AI Analysis */}
-          <div className="space-y-6">
+        {/* Source IPs */}
+        {data.source_ips && data.source_ips.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-2">
+                <Globe className="h-4 w-4 text-warning" />
+                <CardTitle className="text-base font-medium">
+                  Attacking IPs ({data.source_ips.length})
+                </CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-2">
+                {data.source_ips.map((ip, index) => (
+                  <Badge
+                    key={index}
+                    variant="outline"
+                    className="font-mono cursor-pointer hover:bg-accent"
+                    onClick={() => router.push(`/search?q=${ip}`)}
+                  >
+                    {ip}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-4 w-4 ml-1 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(ip);
+                      }}
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  </Badge>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Tabs defaultValue="analysis" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="analysis">AI Analysis</TabsTrigger>
+            <TabsTrigger value="playbook">Playbook</TabsTrigger>
+            <TabsTrigger value="timeline">Timeline</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="analysis" className="space-y-4">
             {/* Summary */}
             <Card>
               <CardHeader>
                 <div className="flex items-center gap-2">
                   <Brain className="h-5 w-5 text-primary" />
-                  <CardTitle className="text-base font-medium">AI Analysis Summary</CardTitle>
+                  <CardTitle className="text-base font-medium">AI Summary</CardTitle>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-muted-foreground">{data.summary}</p>
-
-                {analysis && (
-                  <>
-                    {/* Threat Assessment */}
-                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-                      <div className="flex items-start gap-3">
-                        <AlertTriangle className="mt-0.5 h-5 w-5 text-destructive" />
-                        <div>
-                          <p className="font-medium text-destructive">Threat Assessment</p>
-                          <p className="mt-1 text-sm">{analysis.threat_assessment}</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Confidence Meter */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Analysis Confidence</span>
-                        <span className="font-medium">{analysis.confidence}%</span>
-                      </div>
-                      <Progress value={analysis.confidence} className="h-2" />
-                    </div>
-                  </>
-                )}
+              <CardContent>
+                <p className="text-muted-foreground">
+                  {data.ai_summary || "AI analysis in progress..."}
+                </p>
               </CardContent>
             </Card>
 
-            {/* Indicators */}
-            {analysis && (
-              <Card>
+            {/* Risk Assessment */}
+            {data.ai_risk && (
+              <Card className="border-destructive/30">
                 <CardHeader>
                   <div className="flex items-center gap-2">
-                    <Target className="h-5 w-5 text-warning" />
-                    <CardTitle className="text-base font-medium">
-                      Indicators of Compromise
-                    </CardTitle>
+                    <AlertTriangle className="h-5 w-5 text-destructive" />
+                    <CardTitle className="text-base font-medium">Risk Assessment</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <ul className="space-y-2">
-                    {analysis.indicators.map((indicator, index) => (
-                      <li key={index} className="flex items-start gap-2 text-sm">
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
-                        {indicator}
-                      </li>
-                    ))}
-                  </ul>
+                  <p className="text-muted-foreground">{data.ai_risk}</p>
                 </CardContent>
               </Card>
             )}
 
-            {/* Recommendations */}
-            {analysis && (
+            {/* Narrative */}
+            {data.ai_narrative && (
               <Card>
                 <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <Shield className="h-5 w-5 text-success" />
-                    <CardTitle className="text-base font-medium">
-                      Recommendations
-                    </CardTitle>
-                  </div>
+                  <CardTitle className="text-base font-medium">Attack Narrative</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ul className="space-y-2">
-                    {analysis.recommendations.map((rec, index) => (
-                      <li key={index} className="flex items-start gap-2 text-sm">
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-                        {rec}
-                      </li>
-                    ))}
-                  </ul>
+                  <p className="text-muted-foreground whitespace-pre-wrap">
+                    {data.ai_narrative}
+                  </p>
                 </CardContent>
               </Card>
             )}
-          </div>
+          </TabsContent>
 
-          {/* Playbook */}
-          <div className="space-y-6">
-            <PlaybookViewer
-              playbook={playbookData}
-              canApprove={canApprove}
-              canExecute={canExecute}
-              onApprove={handleApprove}
-              onDecline={handleDecline}
-              onExecute={handleExecute}
-              isLoading={isActioning}
-            />
+          <TabsContent value="playbook">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base font-medium">Ansible Playbook</CardTitle>
+                  <div className="flex items-center gap-2">
+                    {data.playbook_valid ? (
+                      <Badge variant="outline" className="bg-emerald-500/10 text-emerald-500">
+                        <CheckCircle2 className="mr-1 h-3 w-3" />
+                        Valid YAML
+                      </Badge>
+                    ) : data.playbook_error ? (
+                      <Badge variant="outline" className="bg-destructive/10 text-destructive">
+                        <XCircle className="mr-1 h-3 w-3" />
+                        Invalid
+                      </Badge>
+                    ) : null}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => copyToClipboard(data.playbook_yaml || "")}
+                    >
+                      <Copy className="mr-1 h-3 w-3" />
+                      Copy
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {data.playbook_yaml ? (
+                  <ScrollArea className="h-[500px]">
+                    <pre className="rounded-lg bg-muted p-4 text-sm font-mono overflow-x-auto">
+                      {data.playbook_yaml}
+                    </pre>
+                  </ScrollArea>
+                ) : (
+                  <div className="py-12 text-center">
+                    <Brain className="mx-auto h-12 w-12 text-muted-foreground/50 animate-pulse" />
+                    <p className="mt-4 text-muted-foreground">
+                      AI is generating the playbook...
+                    </p>
+                  </div>
+                )}
+                {data.playbook_error && (
+                  <div className="mt-4 p-4 rounded-lg bg-destructive/10 border border-destructive/30">
+                    <p className="text-sm text-destructive">{data.playbook_error}</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-            {/* Timeline */}
-            {analysis && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base font-medium">Analysis Timeline</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-[200px] pr-4">
-                    <div className="relative space-y-4 pl-6">
-                      <div className="absolute left-2 top-2 h-[calc(100%-16px)] w-px bg-border" />
-                      {analysis.timeline.map((event, index) => (
+          <TabsContent value="timeline">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-medium">Investigation Timeline</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[400px] pr-4">
+                  <div className="relative space-y-4 pl-6">
+                    <div className="absolute left-2 top-2 h-[calc(100%-16px)] w-px bg-border" />
+                    {timelineEvents.map((event, index) => {
+                      const config = getEventConfig(event.type);
+                      return (
                         <div key={index} className="relative">
                           <div
                             className={cn(
                               "absolute -left-6 top-1 h-3 w-3 rounded-full border-2 border-background",
-                              event.severity === "critical" && "bg-destructive",
-                              event.severity === "warning" && "bg-warning",
-                              event.severity === "info" && "bg-primary"
+                              config.color
                             )}
                           />
                           <div className="space-y-1">
-                            <p className="text-sm">{event.event}</p>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                {config.label}
+                              </Badge>
+                              {event.playbook_generated && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Playbook Generated
+                                </Badge>
+                              )}
+                              {event.decided_by && (
+                                <Badge variant="secondary" className="text-xs">
+                                  By: {event.decided_by}
+                                </Badge>
+                              )}
+                            </div>
+                            {event.description && (
+                              <p className="text-sm">{event.description}</p>
+                            )}
                             <p className="text-xs text-muted-foreground">
-                              {format(new Date(event.timestamp), "PPp")}
+                              {format(new Date(event.timestamp), "PPpp")}
                             </p>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        </div>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
 
-      {/* Archive Dialog */}
-      <Dialog open={showArchiveDialog} onOpenChange={setShowArchiveDialog}>
+      {/* Decline Dialog */}
+      <Dialog open={showDeclineDialog} onOpenChange={setShowDeclineDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Archive Investigation</DialogTitle>
+            <DialogTitle>Decline Investigation</DialogTitle>
             <DialogDescription>
-              Complete this investigation by providing a resolution summary and any
-              lessons learned.
+              Provide a reason for declining this investigation. The case will be queued for archive.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Resolution Summary *</label>
-              <Textarea
-                placeholder="Describe how the incident was resolved..."
-                value={resolution}
-                onChange={(e) => setResolution(e.target.value)}
-                rows={3}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Lessons Learned</label>
-              <Textarea
-                placeholder="Document any insights or improvements..."
-                value={lessonsLearned}
-                onChange={(e) => setLessonsLearned(e.target.value)}
-                rows={3}
-              />
-            </div>
+            <Textarea
+              placeholder="Reason for declining (optional)..."
+              value={declineReason}
+              onChange={(e) => setDeclineReason(e.target.value)}
+              rows={3}
+            />
           </div>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowArchiveDialog(false)}
-            >
+            <Button variant="outline" onClick={() => setShowDeclineDialog(false)}>
               Cancel
             </Button>
-            <Button
-              onClick={handleArchive}
-              disabled={!resolution.trim() || isActioning}
-            >
-              <Archive className="mr-2 h-4 w-4" />
-              Archive Investigation
+            <Button variant="destructive" onClick={handleDecline} disabled={isActioning}>
+              <XCircle className="mr-2 h-4 w-4" />
+              Decline Investigation
             </Button>
           </DialogFooter>
         </DialogContent>

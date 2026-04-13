@@ -8,6 +8,12 @@ interface StatusBadgeProps {
 }
 
 const statusConfig: Record<string, { label: string; className: string; dot?: string }> = {
+  // Alert statuses
+  new: {
+    label: "New",
+    className: "bg-primary/10 text-primary border-primary/30",
+    dot: "bg-primary animate-pulse",
+  },
   // Incident statuses
   open: {
     label: "Open",

@@ -4,83 +4,176 @@ import { useState } from "react";
 import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow, format } from "date-fns";
-import { ArrowRight, Archive, FileText, BookOpen } from "lucide-react";
-import { archivesAPI, type Archive as ArchiveType, type PaginatedResponse } from "@/lib/api";
+import {
+  ArrowRight,
+  Archive,
+  FileText,
+  CheckCircle2,
+  XCircle,
+  HelpCircle,
+  TrendingUp,
+  Filter,
+} from "lucide-react";
+import {
+  archivesAPI,
+  type Archive as ArchiveType,
+  type ArchiveListResponse,
+  type ArchiveStats,
+} from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
 import { DataTable } from "@/components/data-table";
+import { SeverityBadge } from "@/components/severity-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 // Mock data
 const mockArchives: ArchiveType[] = Array.from({ length: 20 }, (_, i) => ({
   id: `archive-${i + 1}`,
-  archive_id: `ARC-2024-${String(i + 1).padStart(4, "0")}`,
-  investigation_id: `INV-2024-${String(i + 1).padStart(4, "0")}`,
-  archived_at: new Date(Date.now() - i * 86400000).toISOString(),
-  summary: [
+  investigation_id: `inv-${i + 1}`,
+  incident_id: `inc-${i + 1}`,
+  incident_title: [
     "SSH brute force attack mitigated - Attacker IPs blocked",
-    "False positive - Legitimate admin activity",
+    "False positive - Legitimate admin activity confirmed",
     "Malware removed from production server",
     "Data exfiltration attempt blocked at firewall",
     "SQL injection vulnerability patched",
     "Container escape attempt prevented by Falco",
   ][i % 6],
-  resolution: [
-    "Blocked 47 malicious IPs at firewall, enabled fail2ban with aggressive settings",
-    "Confirmed legitimate activity from authorized admin, updated whitelist",
-    "Removed malware, patched vulnerability, rotated credentials",
-    "Updated DLP rules, blocked data transfer to unauthorized endpoints",
-    "Applied security patches, implemented input validation",
-    "Updated container security policies, added runtime protection",
+  severity: (["critical", "high", "medium", "low"] as const)[i % 4],
+  fix_status: (["likely_fixed", "not_fixed", "unknown"] as const)[i % 3],
+  fix_detail: [
+    "Blocked 47 malicious IPs at firewall, enabled fail2ban with aggressive settings. No new alerts observed.",
+    "Confirmed legitimate activity from authorized admin, updated whitelist. Verified with user.",
+    "Removed malware, patched vulnerability, rotated credentials. System clean after 24hr monitoring.",
+    "Updated DLP rules, blocked data transfer to unauthorized endpoints. Data integrity verified.",
+    "Applied security patches, implemented input validation. Penetration test passed.",
+    "Updated container security policies, added runtime protection. No escape attempts since.",
   ][i % 6],
-  lessons_learned: i % 2 === 0 
-    ? "Need to implement more aggressive rate limiting on SSH endpoints"
-    : undefined,
+  archived_at: new Date(Date.now() - i * 86400000).toISOString(),
 }));
+
+const mockStats: ArchiveStats = {
+  total_archived: 34,
+  fix_success_rate_pct: 80.0,
+  by_fix_status: {
+    likely_fixed: 20,
+    not_fixed: 4,
+    unknown: 10,
+  },
+  by_severity: {
+    critical: 2,
+    high: 10,
+    medium: 15,
+    low: 7,
+  },
+};
+
+function FixStatusBadge({ status }: { status: string }) {
+  const config = {
+    likely_fixed: {
+      icon: CheckCircle2,
+      className: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+      label: "Fixed",
+    },
+    not_fixed: {
+      icon: XCircle,
+      className: "bg-destructive/10 text-destructive border-destructive/20",
+      label: "Not Fixed",
+    },
+    unknown: {
+      icon: HelpCircle,
+      className: "bg-muted text-muted-foreground border-border",
+      label: "Unknown",
+    },
+  }[status] || {
+    icon: HelpCircle,
+    className: "bg-muted text-muted-foreground border-border",
+    label: status,
+  };
+
+  const Icon = config.icon;
+
+  return (
+    <Badge variant="outline" className={cn("gap-1", config.className)}>
+      <Icon className="h-3 w-3" />
+      {config.label}
+    </Badge>
+  );
+}
 
 export default function ArchivesPage() {
   const router = useRouter();
-  const [page, setPage] = useState(1);
+  const [offset, setOffset] = useState(0);
+  const [fixStatusFilter, setFixStatusFilter] = useState<string>("all");
+  const limit = 20;
 
-  const { data, isLoading, mutate } = useSWR<PaginatedResponse<ArchiveType>>(
-    ["archives", page],
+  const { data, isLoading, mutate } = useSWR<ArchiveListResponse>(
+    ["archives", offset, fixStatusFilter],
     () =>
       archivesAPI
-        .list({ page, page_size: 20 })
+        .list({
+          limit,
+          offset,
+          fix_status: fixStatusFilter !== "all" ? fixStatusFilter : undefined,
+        })
         .catch(() => ({
-          items: mockArchives.slice((page - 1) * 20, page * 20),
+          archives: mockArchives.slice(offset, offset + limit),
           total: mockArchives.length,
-          page,
-          page_size: 20,
-          total_pages: Math.ceil(mockArchives.length / 20),
-        })),
+        }))
+  );
+
+  const { data: stats } = useSWR<ArchiveStats>(
+    "archives-stats",
+    () => archivesAPI.getStats().catch(() => mockStats),
     { refreshInterval: 60000 }
   );
 
-  const archives = data?.items || [];
-  const totalPages = data?.total_pages || 1;
+  const archives = data?.archives || [];
+  const total = data?.total || 0;
+  const totalPages = Math.ceil(total / limit);
+  const currentPage = Math.floor(offset / limit) + 1;
+
+  const handlePageChange = (page: number) => {
+    setOffset((page - 1) * limit);
+  };
 
   const columns = [
     {
-      key: "id",
-      header: "Archive ID",
+      key: "severity",
+      header: "Severity",
       cell: (archive: ArchiveType) => (
-        <span className="font-mono text-sm">{archive.archive_id}</span>
+        <SeverityBadge severity={archive.severity} />
       ),
-      className: "w-36",
+      className: "w-28",
     },
     {
-      key: "summary",
-      header: "Summary",
+      key: "title",
+      header: "Incident",
       cell: (archive: ArchiveType) => (
         <div className="max-w-md">
-          <p className="truncate font-medium">{archive.summary}</p>
-          <p className="truncate text-xs text-muted-foreground">
-            {archive.resolution}
+          <p className="truncate font-medium">{archive.incident_title}</p>
+          <p className="truncate text-xs text-muted-foreground mt-1">
+            {archive.fix_detail}
           </p>
         </div>
       ),
+    },
+    {
+      key: "fix_status",
+      header: "Fix Status",
+      cell: (archive: ArchiveType) => (
+        <FixStatusBadge status={archive.fix_status} />
+      ),
+      className: "w-32",
     },
     {
       key: "investigation",
@@ -88,7 +181,7 @@ export default function ArchivesPage() {
       cell: (archive: ArchiveType) => (
         <Badge
           variant="outline"
-          className="cursor-pointer font-mono"
+          className="cursor-pointer font-mono text-xs"
           onClick={(e) => {
             e.stopPropagation();
             router.push(`/investigations/${archive.investigation_id}`);
@@ -97,21 +190,7 @@ export default function ArchivesPage() {
           {archive.investigation_id}
         </Badge>
       ),
-      className: "w-36",
-    },
-    {
-      key: "lessons",
-      header: "Lessons",
-      cell: (archive: ArchiveType) =>
-        archive.lessons_learned ? (
-          <Badge variant="secondary">
-            <BookOpen className="mr-1 h-3 w-3" />
-            Documented
-          </Badge>
-        ) : (
-          <span className="text-muted-foreground">-</span>
-        ),
-      className: "w-28",
+      className: "w-32",
     },
     {
       key: "archived",
@@ -132,7 +211,7 @@ export default function ArchivesPage() {
           size="sm"
           onClick={(e) => {
             e.stopPropagation();
-            router.push(`/archives/${archive.archive_id}`);
+            router.push(`/archives/${archive.id}`);
           }}
         >
           View
@@ -143,15 +222,6 @@ export default function ArchivesPage() {
     },
   ];
 
-  // Calculate stats
-  const totalArchived = mockArchives.length;
-  const withLessons = mockArchives.filter((a) => a.lessons_learned).length;
-  const thisMonth = mockArchives.filter(
-    (a) =>
-      new Date(a.archived_at).getMonth() === new Date().getMonth() &&
-      new Date(a.archived_at).getFullYear() === new Date().getFullYear()
-  ).length;
-
   return (
     <div className="flex flex-col">
       <PageHeader
@@ -159,17 +229,31 @@ export default function ArchivesPage() {
         description="Completed investigations and remediation history"
         onRefresh={() => mutate()}
         isLoading={isLoading}
+        actions={
+          <Select value={fixStatusFilter} onValueChange={setFixStatusFilter}>
+            <SelectTrigger className="w-40">
+              <Filter className="mr-2 h-4 w-4" />
+              <SelectValue placeholder="Filter status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="likely_fixed">Likely Fixed</SelectItem>
+              <SelectItem value="not_fixed">Not Fixed</SelectItem>
+              <SelectItem value="unknown">Unknown</SelectItem>
+            </SelectContent>
+          </Select>
+        }
       />
 
       <div className="flex-1 space-y-6 p-6">
         {/* Stats */}
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-4">
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Total Archived</p>
-                  <p className="text-3xl font-bold">{totalArchived}</p>
+                  <p className="text-3xl font-bold">{stats?.total_archived || 0}</p>
                 </div>
                 <Archive className="h-10 w-10 text-muted-foreground/30" />
               </div>
@@ -179,10 +263,12 @@ export default function ArchivesPage() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">This Month</p>
-                  <p className="text-3xl font-bold">{thisMonth}</p>
+                  <p className="text-sm text-muted-foreground">Success Rate</p>
+                  <p className="text-3xl font-bold">
+                    {stats?.fix_success_rate_pct?.toFixed(0) || 0}%
+                  </p>
                 </div>
-                <FileText className="h-10 w-10 text-muted-foreground/30" />
+                <TrendingUp className="h-10 w-10 text-emerald-500/30" />
               </div>
             </CardContent>
           </Card>
@@ -190,10 +276,25 @@ export default function ArchivesPage() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">With Lessons Learned</p>
-                  <p className="text-3xl font-bold">{withLessons}</p>
+                  <p className="text-sm text-muted-foreground">Likely Fixed</p>
+                  <p className="text-3xl font-bold text-emerald-500">
+                    {stats?.by_fix_status?.likely_fixed || 0}
+                  </p>
                 </div>
-                <BookOpen className="h-10 w-10 text-muted-foreground/30" />
+                <CheckCircle2 className="h-10 w-10 text-emerald-500/30" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Not Fixed</p>
+                  <p className="text-3xl font-bold text-destructive">
+                    {stats?.by_fix_status?.not_fixed || 0}
+                  </p>
+                </div>
+                <XCircle className="h-10 w-10 text-destructive/30" />
               </div>
             </CardContent>
           </Card>
@@ -202,10 +303,10 @@ export default function ArchivesPage() {
         <DataTable
           columns={columns}
           data={archives}
-          page={page}
+          page={currentPage}
           totalPages={totalPages}
-          onPageChange={setPage}
-          onRowClick={(archive) => router.push(`/archives/${archive.archive_id}`)}
+          onPageChange={handlePageChange}
+          onRowClick={(archive) => router.push(`/archives/${archive.id}`)}
           isLoading={isLoading}
           emptyMessage="No archived investigations"
         />
