@@ -353,6 +353,234 @@ export interface ActivityItem {
 }
 
 // ==================== METRICS TYPES ====================
+export interface HostCPU {
+  current: number;
+  user: number;
+  system: number;
+  iowait: number;
+}
+
+export interface HostMemory {
+  current: number;
+  used_mb: number;
+  available_mb: number;
+}
+
+export interface HostDisk {
+  device: string;
+  used_percent: number;
+  used_gb: number;
+  free_gb: number;
+}
+
+export interface HostNetwork {
+  in_mb: number;
+  out_mb: number;
+}
+
+export interface HostLoad {
+  "1m": number;
+  "5m": number;
+  "15m": number;
+  cpus: number;
+}
+
+export interface HostConnections {
+  tcp_established: number;
+  tcp_listen: number;
+  udp: number;
+}
+
+export interface HostProcess {
+  name: string;
+  cpu: number;
+  mem_mb: number;
+  pid: number;
+}
+
+export interface HostMetrics {
+  cpu: HostCPU;
+  memory: HostMemory;
+  disk: HostDisk[];
+  network: HostNetwork;
+  load: HostLoad;
+  connections: HostConnections;
+}
+
+export interface HostProcesses {
+  top_cpu: HostProcess[];
+  top_memory: HostProcess[];
+}
+
+export interface MetricHost {
+  hostname: string;
+  ip: string;
+  status: "normal" | "warning" | "critical";
+  last_update: string;
+  metrics: HostMetrics;
+  processes: HostProcesses;
+}
+
+export interface MetricsDashboardResponse {
+  hosts: MetricHost[];
+  timestamp: string;
+}
+
+export interface MetricsHostListResponse {
+  hosts: { hostname: string; ip: string; status: string }[];
+  total: number;
+}
+
+export interface MetricsHostDetailResponse {
+  hostname: string;
+  ip: string;
+  timestamp: string;
+  metrics: {
+    cpu: {
+      usage_percent: number;
+      user_percent: number;
+      system_percent: number;
+      iowait_percent: number;
+    };
+    memory: {
+      used_percent: number;
+      used_bytes: number;
+      used_mb: number;
+      available_bytes: number;
+      available_mb: number;
+    };
+    disk: {
+      device: string;
+      used_percent: number;
+      used_bytes: number;
+      used_gb: number;
+      free_bytes: number;
+      free_gb: number;
+    }[];
+    network: {
+      bytes_recv: number;
+      bytes_sent: number;
+      in_mb: number;
+      out_mb: number;
+    };
+    load: {
+      load_1: number;
+      load_5: number;
+      load_15: number;
+      n_cpus: number;
+    };
+    connections: {
+      tcp_established: number;
+      tcp_timewait: number;
+      tcp_listen: number;
+      udp_socket: number;
+    };
+  };
+  processes: {
+    total: number;
+    running: number;
+    sleeping: number;
+    top_cpu: {
+      pid: number;
+      name: string;
+      user: string;
+      cpu_percent: number;
+      mem_percent: number;
+      command: string;
+    }[];
+    top_memory: {
+      pid: number;
+      name: string;
+      user: string;
+      cpu_percent: number;
+      mem_percent: number;
+      command: string;
+    }[];
+  };
+  alert_status: string;
+  triggered_by?: string;
+}
+
+export interface MetricsHistoryResponse {
+  hostname: string;
+  period: { from: string; to: string };
+  data_points: {
+    timestamp: string;
+    cpu: number;
+    memory: number;
+    disk: number;
+    network_in: number;
+    network_out: number;
+    load_1: number;
+  }[];
+  statistics: {
+    cpu: { avg: number; min: number; max: number };
+    memory: { avg: number; min: number; max: number };
+    disk: { avg: number; min: number; max: number };
+  };
+}
+
+export interface MetricsRootCauseResponse {
+  hostname: string;
+  timestamp: string;
+  anomalies: {
+    type: string;
+    value: number;
+    threshold: number;
+    severity: string;
+  }[];
+  root_cause: {
+    explanation: string;
+    affected_process?: {
+      pid: number;
+      name: string;
+      cpu_percent: number;
+      mem_mb: number;
+    };
+    evidence: string[];
+    confidence: number;
+    recommended_action: string;
+  };
+}
+
+export interface MetricsThresholds {
+  cpu: { warning: number; critical: number };
+  memory: { warning: number; critical: number };
+  disk: { warning: number; critical: number };
+  disk_inodes: { warning: number; critical: number };
+  network_in: { warning: number; critical: number };
+  network_out: { warning: number; critical: number };
+}
+
+export interface MetricsStatusResponse {
+  running: boolean;
+  poll_interval: number;
+  last_poll: string;
+  hosts_tracked: number;
+  errors: string[];
+}
+
+export interface MetricsHealthResponse {
+  status: string;
+  elasticsearch: string;
+  redis: string;
+  timestamp: string;
+}
+
+export interface MetricsAlertResponse {
+  alerts: {
+    id: string;
+    hostname: string;
+    type: string;
+    severity: string;
+    value: number;
+    threshold: number;
+    created_at: string;
+  }[];
+  total: number;
+}
+
+// Legacy type for backwards compatibility
 export interface MetricData {
   host: string;
   timestamp: string;
@@ -431,6 +659,113 @@ export interface SearchResult {
 }
 
 // ==================== IPS MAP TYPES ====================
+export interface IPSAttackSource {
+  ip: string;
+  port: number;
+  country: string;
+  country_name: string;
+  city: string;
+  region?: string;
+  isp?: string;
+  asn?: string;
+  lat: number;
+  lon: number;
+  org?: string;
+}
+
+export interface IPSAttackDestination {
+  ip: string;
+  port: number;
+  country: string;
+  country_name: string;
+  city?: string;
+}
+
+export interface IPSAttack {
+  event_id: string;
+  timestamp: string;
+  source: IPSAttackSource;
+  destination: IPSAttackDestination;
+  severity: string;
+  alert_name: string;
+  category: string;
+  protocol: string;
+  signature_id?: string;
+}
+
+export interface IPSPath {
+  id: string;
+  from: { lat: number; lon: number; city: string; country: string };
+  to: { lat: number; lon: number; city: string; country: string };
+  severity: string;
+  timestamp: string;
+}
+
+export interface IPSMapDataResponse {
+  attacks: IPSAttack[];
+  paths: IPSPath[];
+  count: number;
+  timestamp: string;
+}
+
+export interface IPSLiveEvent {
+  event_id: string;
+  timestamp: string;
+  source_ip: string;
+  source_city: string;
+  source_country: string;
+  source_country_code: string;
+  dest_ip: string;
+  dest_city: string;
+  dest_country: string;
+  severity: string;
+  alert_name: string;
+  category: string;
+  protocol: string;
+}
+
+export interface IPSLiveEventsResponse {
+  events: IPSLiveEvent[];
+  count: number;
+  timestamp: string;
+}
+
+export interface IPSStatisticsResponse {
+  total_attacks: number;
+  unique_sources: number;
+  unique_targets: number;
+  active_events: number;
+  by_severity: Record<string, number>;
+  by_category: { category: string; count: number }[];
+  by_protocol: { protocol: string; count: number }[];
+  top_countries: { code: string; count: number }[];
+  top_isps: { isp: string; count: number }[];
+  timestamp: string;
+}
+
+export interface IPSCountriesResponse {
+  countries: { code: string; name: string; count: number; percentage: number }[];
+  total: number;
+}
+
+export interface IPSFiltersResponse {
+  severities: string[];
+  categories: string[];
+  protocols: string[];
+  countries: string[];
+}
+
+export interface IPSSummaryResponse {
+  total: number;
+  active: number;
+  unique_sources: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+// Legacy types for backwards compatibility
 export interface AttackSource {
   ip: string;
   country: string;
@@ -714,18 +1049,64 @@ export const pipelineAPI = {
     fetchAPI<{ total_processed: number; error_rate: number; avg_processing_time: number }>("/api/pipeline/stats"),
 };
 
-// Metrics
+// Metrics (Hardware Resources)
 export const metricsAPI = {
-  getDashboard: () => fetchAPI<MetricsDashboard>(`${API_VERSION}/metrics/dashboard`),
-  getHost: (host: string) => fetchAPI<MetricData>(`${API_VERSION}/metrics/${host}`),
+  // Get all hosts dashboard
+  getDashboard: () => fetchAPI<MetricsDashboardResponse>(`${API_VERSION}/metrics/dashboard`),
+  // List monitored hosts
+  getHosts: () => fetchAPI<MetricsHostListResponse>(`${API_VERSION}/metrics/hosts`),
+  // Get single host metrics
+  getHost: (host: string) => fetchAPI<MetricsHostDetailResponse>(`${API_VERSION}/metrics/${host}`),
+  // Get host history
+  getHostHistory: (host: string, params?: { hours?: number; interval?: number }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.hours) searchParams.set("hours", params.hours.toString());
+    if (params?.interval) searchParams.set("interval", params.interval.toString());
+    const query = searchParams.toString() ? `?${searchParams}` : "";
+    return fetchAPI<MetricsHistoryResponse>(`${API_VERSION}/metrics/${host}/history${query}`);
+  },
+  // Get root cause analysis
+  getRootCause: (host: string) => fetchAPI<MetricsRootCauseResponse>(`${API_VERSION}/metrics/${host}/root-cause`),
+  // Get thresholds
+  getThresholds: () => fetchAPI<MetricsThresholds>(`${API_VERSION}/metrics/thresholds`),
+  // Get status
+  getStatus: () => fetchAPI<MetricsStatusResponse>(`${API_VERSION}/metrics/status`),
+  // Get health
+  getHealth: () => fetchAPI<MetricsHealthResponse>(`${API_VERSION}/metrics/health`),
+  // Get detailed health
+  getHealthDetailed: () => fetchAPI<{
+    status: string;
+    components: {
+      elasticsearch: { status: string; latency_ms: number };
+      redis: { status: string; latency_ms: number };
+      cache: { status: string; entries: number };
+    };
+    metrics: {
+      hosts: number;
+      last_update: string;
+      update_age_seconds: number;
+    };
+  }>(`${API_VERSION}/metrics/health/detailed`),
+  // Get performance alerts
+  getAlerts: (params?: { limit?: number; severity?: string }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.set("limit", params.limit.toString());
+    if (params?.severity) searchParams.set("severity", params.severity);
+    const query = searchParams.toString() ? `?${searchParams}` : "";
+    return fetchAPI<MetricsAlertResponse>(`${API_VERSION}/metrics/alerts${query}`);
+  },
+  // Get host relationships
   getHostRelationships: (host: string) => fetchAPI<{
-    host: string;
-    metrics: MetricData;
-    alerts: Alert[];
-    investigations: Investigation[];
+    host: { hostname: string; ip: string; status: string };
+    metrics: MetricsHostDetailResponse["metrics"];
+    alerts: { count: number; items: { id: string; type: string; severity: string }[] };
+    investigations: { count: number; items: { id: string; status: string }[] };
   }>(`${API_VERSION}/metrics/${host}/relationships`),
+  // Get host alerts
+  getHostAlerts: (host: string) => fetchAPI<MetricsAlertResponse>(`${API_VERSION}/metrics/${host}/alerts`),
+  // Get host investigations
+  getHostInvestigations: (host: string) => fetchAPI<{ investigations: Investigation[]; total: number }>(`${API_VERSION}/metrics/${host}/investigations`),
   // Legacy
-  getHosts: () => fetchAPI<string[]>("/api/metrics/hosts"),
   getHostMetrics: (host: string, timeRange?: string) => {
     const params = timeRange ? `?time_range=${timeRange}` : "";
     return fetchAPI<MetricData[]>(`/api/metrics/hosts/${host}${params}`);
@@ -759,21 +1140,78 @@ export const searchAPI = {
   searchByDomain: (domain: string) => fetchAPI<SearchResponse>(`${API_VERSION}/search/domains/${domain}`),
 };
 
-// IPS Map
+// IPS Map & Attack Visualization
 export const ipsAPI = {
-  getMapData: () => fetchAPI<IPSMapData>(`${API_VERSION}/ips/map-data`),
-  getStatistics: () => fetchAPI<IPSStatistics>(`${API_VERSION}/ips/statistics`),
-  getCountries: () => fetchAPI<{ code: string; name: string }[]>(`${API_VERSION}/ips/countries`),
+  // Get map data with animated paths
+  getMapData: (params?: { limit?: number; time_range?: number; severity?: string }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.set("limit", params.limit.toString());
+    if (params?.time_range) searchParams.set("time_range", params.time_range.toString());
+    if (params?.severity) searchParams.set("severity", params.severity);
+    const query = searchParams.toString() ? `?${searchParams}` : "";
+    return fetchAPI<IPSMapDataResponse>(`${API_VERSION}/ips/map-data${query}`);
+  },
+  // Get live events table
+  getLiveEvents: () => fetchAPI<IPSLiveEventsResponse>(`${API_VERSION}/ips/events/live`),
+  // Get paginated events
+  getEvents: (params?: { limit?: number; offset?: number; severity?: string; country?: string; protocol?: string; category?: string }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.set("limit", params.limit.toString());
+    if (params?.offset) searchParams.set("offset", params.offset.toString());
+    if (params?.severity) searchParams.set("severity", params.severity);
+    if (params?.country) searchParams.set("country", params.country);
+    if (params?.protocol) searchParams.set("protocol", params.protocol);
+    if (params?.category) searchParams.set("category", params.category);
+    const query = searchParams.toString() ? `?${searchParams}` : "";
+    return fetchAPI<IPSLiveEventsResponse>(`${API_VERSION}/ips/events${query}`);
+  },
+  // Get statistics
+  getStatistics: () => fetchAPI<IPSStatisticsResponse>(`${API_VERSION}/ips/statistics`),
+  // Get countries breakdown
+  getCountries: () => fetchAPI<IPSCountriesResponse>(`${API_VERSION}/ips/countries`),
+  // Get industry statistics
+  getIndustryStats: () => fetchAPI<{ industries: { name: string; count: number }[] }>(`${API_VERSION}/ips/statistics/industries`),
+  // Get target statistics
+  getTargetStats: () => fetchAPI<{ targets: { host: string; count: number }[] }>(`${API_VERSION}/ips/statistics/targets`),
+  // Get attack type statistics
+  getAttackTypeStats: () => fetchAPI<{ attack_types: { type: string; count: number }[] }>(`${API_VERSION}/ips/statistics/attack-types`),
+  // Get available filters
+  getFilters: () => fetchAPI<IPSFiltersResponse>(`${API_VERSION}/ips/filters`),
+  // Get quick summary
+  getSummary: () => fetchAPI<IPSSummaryResponse>(`${API_VERSION}/ips/summary`),
+  // Get health
+  getStatus: () => fetchAPI<{ status: string }>(`${API_VERSION}/ips/status`),
+  // Get detailed health
+  getStatusDetailed: () => fetchAPI<{ status: string; details: Record<string, unknown> }>(`${API_VERSION}/ips/status/detailed`),
+  // Submit single event
   submitEvent: (event: {
     source_ip: string;
     dest_ip: string;
+    source_port?: number;
+    dest_port?: number;
     severity: string;
     alert_name: string;
+    category?: string;
     protocol?: string;
+    signature_id?: string;
   }) => fetchAPI<{ status: string; event_id: string }>(`${API_VERSION}/ips/event`, {
     method: "POST",
     body: JSON.stringify(event),
   }),
+  // Submit bulk events
+  submitBulkEvents: (events: {
+    source_ip: string;
+    dest_ip: string;
+    severity: string;
+    alert_name: string;
+  }[]) => fetchAPI<{ status: string; count: number }>(`${API_VERSION}/ips/events/bulk`, {
+    method: "POST",
+    body: JSON.stringify({ events }),
+  }),
+  // Clear events
+  clearEvents: () => fetchAPI<{ status: string }>(`${API_VERSION}/ips/events`, { method: "DELETE" }),
+  // Get single event
+  getEvent: (eventId: string) => fetchAPI<IPSAttack>(`${API_VERSION}/ips/${eventId}`),
 };
 
 // AI Assistant
