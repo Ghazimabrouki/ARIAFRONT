@@ -4,11 +4,17 @@ import { useState, useCallback } from "react";
 import useSWR from "swr";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
-import { X, ArrowRight, Clock, Brain } from "lucide-react";
-import { investigationsAPI, type Investigation, type PaginatedResponse } from "@/lib/api";
+import { X, ArrowRight, Clock, Server, Globe } from "lucide-react";
+import {
+  investigationsAPI,
+  type Investigation,
+  type InvestigationListResponse,
+  type InvestigationStats,
+} from "@/lib/api";
 import { useWSSubscription, type WSMessage } from "@/lib/websocket";
 import { PageHeader } from "@/components/page-header";
 import { DataTable } from "@/components/data-table";
+import { SeverityBadge } from "@/components/severity-badge";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,12 +31,19 @@ import { cn } from "@/lib/utils";
 // Mock data for demonstration
 const mockInvestigations: Investigation[] = Array.from({ length: 12 }, (_, i) => ({
   id: `investigation-${i + 1}`,
-  investigation_id: `INV-2024-${String(i + 1).padStart(4, "0")}`,
-  created_at: new Date(Date.now() - i * 5400000).toISOString(),
-  updated_at: new Date(Date.now() - i * 2700000).toISOString(),
-  status: (["pending", "running", "awaiting_approval", "completed", "archived", "failed"] as const)[i % 6],
-  incident_id: `INC-2024-${String(i + 1).padStart(4, "0")}`,
-  summary: [
+  incident_id: `inc-${i + 1}`,
+  incident_title: [
+    "SSH Brute Force Attack - 117.50.130.90 (CN)",
+    "Potential data exfiltration via DNS tunneling",
+    "Malware signature detected in containerized workload",
+    "Unauthorized API access pattern identified",
+    "SQL injection attempt on web application",
+    "Privilege escalation attempt in Kubernetes cluster",
+  ][i % 6],
+  status: (["pending", "running", "awaiting_approval", "approved", "completed", "failed", "archived", "declined"] as const)[i % 8],
+  severity: (["critical", "high", "medium", "low"] as const)[i % 4],
+  source_ips: [`117.50.130.${90 + i}`, `103.45.67.${80 + i}`],
+  ai_summary: [
     "SSH brute force attack detected from multiple IPs targeting production servers",
     "Potential data exfiltration attempt via DNS tunneling",
     "Malware signature detected in containerized workload",
@@ -38,31 +51,49 @@ const mockInvestigations: Investigation[] = Array.from({ length: 12 }, (_, i) =>
     "SQL injection attempt on web application",
     "Privilege escalation attempt in Kubernetes cluster",
   ][i % 6],
+  target_host: ["ghazi", "web-server-01", "db-server-02", "api-gateway"][i % 4],
+  created_at: new Date(Date.now() - i * 5400000).toISOString(),
+  updated_at: new Date(Date.now() - i * 2700000).toISOString(),
 }));
+
+const mockStats: InvestigationStats = {
+  pending: 5,
+  awaiting_approval: 52,
+  approved: 7,
+  running: 2,
+  completed: 3,
+  failed: 8,
+  archived: 18,
+  declined: 2,
+  total: 97,
+};
 
 const statusOptions = [
   { value: "all", label: "All Statuses" },
   { value: "pending", label: "Pending" },
   { value: "running", label: "Running" },
   { value: "awaiting_approval", label: "Awaiting Approval" },
+  { value: "approved", label: "Approved" },
+  { value: "declined", label: "Declined" },
   { value: "completed", label: "Completed" },
-  { value: "archived", label: "Archived" },
   { value: "failed", label: "Failed" },
+  { value: "archived", label: "Archived" },
 ];
 
 export default function InvestigationsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [page, setPage] = useState(1);
+  const [offset, setOffset] = useState(0);
   const [status, setStatus] = useState(searchParams.get("status") || "all");
+  const limit = 20;
 
-  const { data, error, isLoading, mutate } = useSWR<PaginatedResponse<Investigation>>(
-    ["investigations", page, status],
+  const { data, error, isLoading, mutate } = useSWR<InvestigationListResponse>(
+    ["investigations", offset, status],
     () =>
       investigationsAPI
         .list({
-          page,
-          page_size: 20,
+          limit,
+          offset,
           status: status !== "all" ? status : undefined,
         })
         .catch(() => {
@@ -71,14 +102,17 @@ export default function InvestigationsPage() {
             filtered = filtered.filter((i) => i.status === status);
           }
           return {
-            items: filtered.slice((page - 1) * 20, page * 20),
+            investigations: filtered.slice(offset, offset + limit),
             total: filtered.length,
-            page,
-            page_size: 20,
-            total_pages: Math.ceil(filtered.length / 20),
           };
         }),
     { refreshInterval: 15000 }
+  );
+
+  const { data: stats } = useSWR<InvestigationStats>(
+    "investigations-stats",
+    () => investigationsAPI.getStats().catch(() => mockStats),
+    { refreshInterval: 30000 }
   );
 
   const handleWSUpdate = useCallback((message: WSMessage) => {
@@ -89,15 +123,26 @@ export default function InvestigationsPage() {
   useWSSubscription("investigation_updated", handleWSUpdate);
   useWSSubscription("playbook_status_changed", handleWSUpdate);
 
-  const investigations = data?.items || [];
-  const totalPages = data?.total_pages || 1;
+  const investigations = data?.investigations || [];
+  const total = data?.total || 0;
+  const totalPages = Math.ceil(total / limit);
+  const currentPage = Math.floor(offset / limit) + 1;
 
-  // Count pending approvals
-  const pendingApprovals = mockInvestigations.filter(
-    (i) => i.status === "awaiting_approval"
-  ).length;
+  const handlePageChange = (page: number) => {
+    setOffset((page - 1) * limit);
+  };
+
+  const pendingApprovals = stats?.awaiting_approval || 0;
 
   const columns = [
+    {
+      key: "severity",
+      header: "Severity",
+      cell: (inv: Investigation) => (
+        inv.severity ? <SeverityBadge severity={inv.severity} /> : <span className="text-muted-foreground">-</span>
+      ),
+      className: "w-28",
+    },
     {
       key: "status",
       header: "Status",
@@ -105,29 +150,35 @@ export default function InvestigationsPage() {
       className: "w-40",
     },
     {
-      key: "id",
-      header: "Investigation ID",
+      key: "incident",
+      header: "Incident",
       cell: (inv: Investigation) => (
-        <span className="font-mono text-sm">{inv.investigation_id}</span>
-      ),
-      className: "w-36",
-    },
-    {
-      key: "summary",
-      header: "Summary",
-      cell: (inv: Investigation) => (
-        <div className="max-w-lg">
-          <p className="truncate">{inv.summary || "AI analysis in progress..."}</p>
+        <div className="max-w-md">
+          <p className="truncate font-medium">{inv.incident_title}</p>
+          <div className="flex items-center gap-2 mt-1">
+            {inv.target_host && (
+              <Badge variant="secondary" className="text-xs">
+                <Server className="mr-1 h-2 w-2" />
+                {inv.target_host}
+              </Badge>
+            )}
+            {inv.source_ips && inv.source_ips.length > 0 && (
+              <span className="text-xs text-muted-foreground font-mono">
+                {inv.source_ips[0]}
+                {inv.source_ips.length > 1 && ` +${inv.source_ips.length - 1}`}
+              </span>
+            )}
+          </div>
         </div>
       ),
     },
     {
-      key: "incident",
-      header: "Incident",
+      key: "incident_link",
+      header: "Incident ID",
       cell: (inv: Investigation) => (
         <Badge
           variant="outline"
-          className="cursor-pointer font-mono"
+          className="cursor-pointer font-mono text-xs"
           onClick={(e) => {
             e.stopPropagation();
             router.push(`/incidents/${inv.incident_id}`);
@@ -136,7 +187,7 @@ export default function InvestigationsPage() {
           {inv.incident_id}
         </Badge>
       ),
-      className: "w-36",
+      className: "w-32",
     },
     {
       key: "updated",
@@ -157,7 +208,7 @@ export default function InvestigationsPage() {
           size="sm"
           onClick={(e) => {
             e.stopPropagation();
-            router.push(`/investigations/${inv.investigation_id}`);
+            router.push(`/investigations/${inv.id}`);
           }}
         >
           {inv.status === "awaiting_approval" ? "Review" : "View"}
@@ -170,7 +221,7 @@ export default function InvestigationsPage() {
 
   const clearFilters = () => {
     setStatus("all");
-    setPage(1);
+    setOffset(0);
   };
 
   const hasFilters = status !== "all";
@@ -184,7 +235,7 @@ export default function InvestigationsPage() {
         isLoading={isLoading}
         actions={
           <div className="flex items-center gap-2">
-            <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
+            <Select value={status} onValueChange={(v) => { setStatus(v); setOffset(0); }}>
               <SelectTrigger className="w-44">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
@@ -237,26 +288,32 @@ export default function InvestigationsPage() {
         )}
 
         {/* Status Overview */}
-        <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
-          {statusOptions.slice(1).map((opt) => {
-            const count = mockInvestigations.filter(
-              (i) => i.status === opt.value
-            ).length;
-            const isActive = status === opt.value;
+        <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-8">
+          {[
+            { key: "pending", label: "Pending", count: stats?.pending || 0 },
+            { key: "running", label: "Running", count: stats?.running || 0 },
+            { key: "awaiting_approval", label: "Awaiting", count: stats?.awaiting_approval || 0 },
+            { key: "approved", label: "Approved", count: stats?.approved || 0 },
+            { key: "completed", label: "Completed", count: stats?.completed || 0 },
+            { key: "failed", label: "Failed", count: stats?.failed || 0 },
+            { key: "declined", label: "Declined", count: stats?.declined || 0 },
+            { key: "archived", label: "Archived", count: stats?.archived || 0 },
+          ].map((item) => {
+            const isActive = status === item.key;
 
             return (
               <Card
-                key={opt.value}
+                key={item.key}
                 className={cn(
                   "cursor-pointer transition-all hover:shadow-md",
                   isActive && "ring-2 ring-primary"
                 )}
-                onClick={() => setStatus(isActive ? "all" : opt.value)}
+                onClick={() => setStatus(isActive ? "all" : item.key)}
               >
-                <CardContent className="pt-4">
-                  <div className="flex items-center justify-between">
-                    <StatusBadge status={opt.value} />
-                    <span className="text-2xl font-bold">{count}</span>
+                <CardContent className="pt-4 pb-3">
+                  <div className="flex flex-col items-center gap-1">
+                    <span className="text-2xl font-bold">{item.count}</span>
+                    <StatusBadge status={item.key} className="text-[10px]" />
                   </div>
                 </CardContent>
               </Card>
@@ -267,10 +324,10 @@ export default function InvestigationsPage() {
         <DataTable
           columns={columns}
           data={investigations}
-          page={page}
+          page={currentPage}
           totalPages={totalPages}
-          onPageChange={setPage}
-          onRowClick={(inv) => router.push(`/investigations/${inv.investigation_id}`)}
+          onPageChange={handlePageChange}
+          onRowClick={(inv) => router.push(`/investigations/${inv.id}`)}
           isLoading={isLoading}
           emptyMessage="No investigations found"
         />

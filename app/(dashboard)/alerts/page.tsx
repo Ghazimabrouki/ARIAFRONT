@@ -4,14 +4,31 @@ import { useState, useCallback } from "react";
 import useSWR from "swr";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceToNow, format } from "date-fns";
-import { ExternalLink, Filter, X } from "lucide-react";
-import { alertsAPI, type Alert, type PaginatedResponse } from "@/lib/api";
+import {
+  ExternalLink,
+  Filter,
+  X,
+  Globe,
+  Server,
+  Tag,
+  AlertTriangle,
+  Shield,
+  Copy,
+  ChevronRight,
+} from "lucide-react";
+import {
+  alertsAPI,
+  incidentsAPI,
+  type Alert,
+  type AlertListResponse,
+  type AlertDetailResponse,
+} from "@/lib/api";
 import { useWSSubscription, type WSMessage } from "@/lib/websocket";
 import { PageHeader } from "@/components/page-header";
 import { DataTable } from "@/components/data-table";
 import { SeverityBadge } from "@/components/severity-badge";
+import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -27,15 +44,18 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 // Mock data for demonstration
 const mockAlerts: Alert[] = Array.from({ length: 25 }, (_, i) => ({
   id: `alert-${i + 1}`,
-  alert_id: `ALT-2024-${String(i + 1).padStart(4, "0")}`,
-  timestamp: new Date(Date.now() - i * 300000).toISOString(),
-  rule_level: Math.floor(Math.random() * 15) + 1,
-  rule_description: [
-    "SSH brute force attack detected",
+  source: ["wazuh", "falco", "suricata", "filebeat"][i % 4],
+  source_id: `src-${i + 1000}`,
+  title: [
+    "ET SCAN Potential SSH Scan",
     "Suspicious file modification in /etc/passwd",
     "Multiple failed authentication attempts",
     "Potential SQL injection attempt",
@@ -44,12 +64,59 @@ const mockAlerts: Alert[] = Array.from({ length: 25 }, (_, i) => ({
     "Malware signature detected by ClamAV",
     "Unauthorized API access attempt",
   ][i % 8],
-  agent_name: [`web-server-01`, `db-server-02`, `api-gateway-01`, `prod-node-${(i % 5) + 1}`][i % 4],
-  agent_ip: `192.168.${(i % 3) + 1}.${(i % 254) + 1}`,
-  source: ["wazuh", "falco", "suricata", "filebeat"][i % 4],
-  incident_id: i % 3 === 0 ? `INC-2024-${String(Math.floor(i / 3)).padStart(4, "0")}` : undefined,
-  investigation_id: i % 5 === 0 ? `INV-2024-${String(Math.floor(i / 5)).padStart(4, "0")}` : undefined,
+  description: `Detailed description of the security event. This alert was triggered due to suspicious activity detected on the monitored system. Alert index: ${i + 1}`,
+  severity: (["critical", "high", "medium", "low"] as const)[i % 4],
+  status: (["new", "open", "investigating", "closed"] as const)[i % 4],
+  source_ip: `${172 + (i % 3)}.${104 + (i % 10)}.${13 + (i % 20)}.${54 + i}`,
+  dest_ip: "10.175.1.137",
+  hostname: ["ghazi", "web-server-01", "db-server-02", "api-gateway"][i % 4],
+  rule_name: [
+    "ET SCAN Potential SSH Scan",
+    "File integrity monitoring alert",
+    "Authentication failure threshold exceeded",
+    "SQL injection attempt detected",
+  ][i % 4],
+  iocs: {
+    ips: [`${172 + (i % 3)}.${104 + (i % 10)}.${13 + (i % 20)}.${54 + i}`, "10.175.1.137"],
+    hashes: i % 3 === 0 ? ["a1b2c3d4e5f6789012345678901234567890abcd"] : [],
+    domains: i % 4 === 0 ? ["malicious-domain.com"] : [],
+    urls: [],
+  },
+  tags: [
+    ["suricata", "mitre-T1595", "src-country-US"],
+    ["wazuh", "file-integrity", "critical-system"],
+    ["falco", "container-escape", "kubernetes"],
+    ["auth-failure", "brute-force", "ssh"],
+  ][i % 4],
+  created_at: new Date(Date.now() - i * 300000).toISOString(),
+  updated_at: new Date(Date.now() - i * 300000).toISOString(),
 }));
+
+const mockAlertDetail: AlertDetailResponse = {
+  data: mockAlerts[0],
+  relationships: {
+    incidents: {
+      count: 2,
+      items: [
+        { id: "inc-1", title: "SSH Brute Force Attack Investigation" },
+        { id: "inc-2", title: "Related Network Scan Activity" },
+      ],
+      view_all: "/api/v1/alerts/alert-1/incidents",
+    },
+    similar: {
+      count: 5,
+      items: [
+        { id: "alert-2", source_ip: "172.104.13.55" },
+        { id: "alert-3", source_ip: "172.104.13.56" },
+      ],
+      view_all: "/api/v1/alerts/alert-1/similar",
+    },
+  },
+  actions: {
+    view_timeline: "/api/v1/incidents/inc-1/timeline",
+    search_ip: "/api/v1/search/ips/172.104.13.54",
+  },
+};
 
 const sourceOptions = [
   { value: "all", label: "All Sources" },
@@ -59,75 +126,99 @@ const sourceOptions = [
   { value: "filebeat", label: "Filebeat" },
 ];
 
-const levelOptions = [
-  { value: "all", label: "All Levels" },
-  { value: "12", label: "Critical (12+)" },
-  { value: "8", label: "High (8+)" },
-  { value: "4", label: "Medium (4+)" },
-  { value: "1", label: "Low (1+)" },
+const severityOptions = [
+  { value: "all", label: "All Severities" },
+  { value: "critical", label: "Critical" },
+  { value: "high", label: "High" },
+  { value: "medium", label: "Medium" },
+  { value: "low", label: "Low" },
+];
+
+const statusOptions = [
+  { value: "all", label: "All Statuses" },
+  { value: "new", label: "New" },
+  { value: "open", label: "Open" },
+  { value: "investigating", label: "Investigating" },
+  { value: "closed", label: "Closed" },
 ];
 
 export default function AlertsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [page, setPage] = useState(1);
+  const [offset, setOffset] = useState(0);
   const [source, setSource] = useState(searchParams.get("source") || "all");
-  const [level, setLevel] = useState(searchParams.get("level") || "all");
-  const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+  const [severity, setSeverity] = useState(searchParams.get("severity") || "all");
+  const [status, setStatus] = useState(searchParams.get("status") || "all");
+  const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
+  const limit = 20;
 
-  const { data, error, isLoading, mutate } = useSWR<PaginatedResponse<Alert>>(
-    ["alerts", page, source, level],
+  const { data, error, isLoading, mutate } = useSWR<AlertListResponse>(
+    ["alerts", offset, source, severity, status],
     () =>
       alertsAPI
         .list({
-          page,
-          page_size: 20,
+          limit,
+          offset,
           source: source !== "all" ? source : undefined,
-          level: level !== "all" ? parseInt(level) : undefined,
+          severity: severity !== "all" ? severity : undefined,
+          status: status !== "all" ? status : undefined,
         })
         .catch(() => ({
-          items: mockAlerts.slice((page - 1) * 20, page * 20),
+          alerts: mockAlerts.slice(offset, offset + limit),
           total: mockAlerts.length,
-          page,
-          page_size: 20,
-          total_pages: Math.ceil(mockAlerts.length / 20),
-        })),
-    { refreshInterval: 30000 }
+          limit,
+          offset,
+        }))
   );
 
-  const handleWSUpdate = useCallback((message: WSMessage) => {
-    mutate();
-  }, [mutate]);
+  // Fetch full alert details when one is selected
+  const { data: alertDetail, isLoading: detailLoading } = useSWR<AlertDetailResponse>(
+    selectedAlertId ? ["alert-detail", selectedAlertId] : null,
+    () =>
+      alertsAPI.get(selectedAlertId!).catch(() => ({
+        ...mockAlertDetail,
+        data: mockAlerts.find((a) => a.id === selectedAlertId) || mockAlerts[0],
+      }))
+  );
+
+  const handleWSUpdate = useCallback(
+    (message: WSMessage) => {
+      mutate();
+    },
+    [mutate]
+  );
 
   useWSSubscription("alert_created", handleWSUpdate);
 
-  const alerts = data?.items || [];
-  const totalPages = data?.total_pages || 1;
+  const alerts = data?.alerts || [];
+  const total = data?.total || 0;
+  const totalPages = Math.ceil(total / limit);
+  const currentPage = Math.floor(offset / limit) + 1;
+
+  const handlePageChange = (page: number) => {
+    setOffset((page - 1) * limit);
+  };
 
   const columns = [
     {
       key: "severity",
       header: "Severity",
-      cell: (alert: Alert) => <SeverityBadge severity={alert.rule_level} />,
-      className: "w-24",
+      cell: (alert: Alert) => <SeverityBadge severity={alert.severity} />,
+      className: "w-28",
     },
     {
-      key: "id",
-      header: "Alert ID",
-      cell: (alert: Alert) => (
-        <span className="font-mono text-sm">{alert.alert_id}</span>
-      ),
-      className: "w-36",
-    },
-    {
-      key: "description",
-      header: "Description",
+      key: "title",
+      header: "Alert",
       cell: (alert: Alert) => (
         <div className="max-w-md">
-          <p className="truncate font-medium">{alert.rule_description}</p>
-          <p className="text-xs text-muted-foreground">
-            {alert.agent_name} ({alert.agent_ip})
-          </p>
+          <p className="truncate font-medium">{alert.title}</p>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-xs text-muted-foreground font-mono">
+              {alert.source_ip}
+            </span>
+            <ChevronRight className="h-3 w-3 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">{alert.hostname}</span>
+          </div>
         </div>
       ),
     },
@@ -142,33 +233,18 @@ export default function AlertsPage() {
       className: "w-28",
     },
     {
+      key: "status",
+      header: "Status",
+      cell: (alert: Alert) => <StatusBadge status={alert.status} />,
+      className: "w-32",
+    },
+    {
       key: "timestamp",
       header: "Time",
       cell: (alert: Alert) => (
         <span className="text-sm text-muted-foreground">
-          {formatDistanceToNow(new Date(alert.timestamp), { addSuffix: true })}
+          {formatDistanceToNow(new Date(alert.created_at), { addSuffix: true })}
         </span>
-      ),
-      className: "w-32",
-    },
-    {
-      key: "links",
-      header: "",
-      cell: (alert: Alert) => (
-        <div className="flex items-center gap-1">
-          {alert.incident_id && (
-            <Badge
-              variant="secondary"
-              className="cursor-pointer text-xs"
-              onClick={(e) => {
-                e.stopPropagation();
-                router.push(`/incidents/${alert.incident_id}`);
-              }}
-            >
-              {alert.incident_id}
-            </Badge>
-          )}
-        </div>
       ),
       className: "w-32",
     },
@@ -176,11 +252,19 @@ export default function AlertsPage() {
 
   const clearFilters = () => {
     setSource("all");
-    setLevel("all");
-    setPage(1);
+    setSeverity("all");
+    setStatus("all");
+    setOffset(0);
   };
 
-  const hasFilters = source !== "all" || level !== "all";
+  const hasFilters = source !== "all" || severity !== "all" || status !== "all";
+
+  const selectedAlert = alertDetail?.data;
+  const relationships = alertDetail?.relationships;
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
 
   return (
     <div className="flex flex-col">
@@ -191,7 +275,13 @@ export default function AlertsPage() {
         isLoading={isLoading}
         actions={
           <div className="flex items-center gap-2">
-            <Select value={source} onValueChange={(v) => { setSource(v); setPage(1); }}>
+            <Select
+              value={source}
+              onValueChange={(v) => {
+                setSource(v);
+                setOffset(0);
+              }}
+            >
               <SelectTrigger className="w-36">
                 <SelectValue placeholder="Source" />
               </SelectTrigger>
@@ -203,12 +293,36 @@ export default function AlertsPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={level} onValueChange={(v) => { setLevel(v); setPage(1); }}>
+            <Select
+              value={severity}
+              onValueChange={(v) => {
+                setSeverity(v);
+                setOffset(0);
+              }}
+            >
               <SelectTrigger className="w-36">
-                <SelectValue placeholder="Level" />
+                <SelectValue placeholder="Severity" />
               </SelectTrigger>
               <SelectContent>
-                {levelOptions.map((opt) => (
+                {severityOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={status}
+              onValueChange={(v) => {
+                setStatus(v);
+                setOffset(0);
+              }}
+            >
+              <SelectTrigger className="w-36">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                {statusOptions.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>
@@ -229,116 +343,341 @@ export default function AlertsPage() {
         <DataTable
           columns={columns}
           data={alerts}
-          page={page}
+          page={currentPage}
           totalPages={totalPages}
-          onPageChange={setPage}
-          onRowClick={setSelectedAlert}
+          onPageChange={handlePageChange}
+          onRowClick={(alert) => setSelectedAlertId(alert.id)}
           isLoading={isLoading}
           emptyMessage="No alerts found"
         />
       </div>
 
       {/* Alert Detail Sheet */}
-      <Sheet open={!!selectedAlert} onOpenChange={() => setSelectedAlert(null)}>
-        <SheetContent className="w-[500px] sm:max-w-[500px]">
-          {selectedAlert && (
+      <Sheet open={!!selectedAlertId} onOpenChange={() => setSelectedAlertId(null)}>
+        <SheetContent className="w-[600px] sm:max-w-[600px] overflow-y-auto">
+          {detailLoading ? (
+            <div className="flex h-full items-center justify-center">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            </div>
+          ) : selectedAlert ? (
             <>
               <SheetHeader>
                 <div className="flex items-center gap-3">
-                  <SeverityBadge severity={selectedAlert.rule_level} />
-                  <SheetTitle className="font-mono">
-                    {selectedAlert.alert_id}
-                  </SheetTitle>
+                  <SeverityBadge severity={selectedAlert.severity} />
+                  <StatusBadge status={selectedAlert.status} />
                 </div>
-                <SheetDescription>
-                  Alert details and related information
+                <SheetTitle className="text-left">{selectedAlert.title}</SheetTitle>
+                <SheetDescription className="text-left">
+                  {format(new Date(selectedAlert.created_at), "PPpp")}
                 </SheetDescription>
               </SheetHeader>
-              <div className="mt-6 space-y-6">
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground">
-                    Description
-                  </h4>
-                  <p className="mt-1">{selectedAlert.rule_description}</p>
-                </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <h4 className="text-sm font-medium text-muted-foreground">
-                      Source
-                    </h4>
-                    <p className="mt-1 capitalize">{selectedAlert.source}</p>
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-medium text-muted-foreground">
-                      Level
-                    </h4>
-                    <p className="mt-1">{selectedAlert.rule_level}</p>
-                  </div>
-                </div>
+              <Tabs defaultValue="details" className="mt-6">
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="details">Details</TabsTrigger>
+                  <TabsTrigger value="iocs">IOCs</TabsTrigger>
+                  <TabsTrigger value="related">Related</TabsTrigger>
+                </TabsList>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <h4 className="text-sm font-medium text-muted-foreground">
-                      Agent
-                    </h4>
-                    <p className="mt-1">{selectedAlert.agent_name}</p>
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-medium text-muted-foreground">
-                      IP Address
-                    </h4>
-                    <p className="mt-1 font-mono">{selectedAlert.agent_ip}</p>
-                  </div>
-                </div>
+                <TabsContent value="details" className="space-y-4 mt-4">
+                  {/* Description */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">Description</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedAlert.description}
+                      </p>
+                    </CardContent>
+                  </Card>
 
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground">
-                    Timestamp
-                  </h4>
-                  <p className="mt-1">
-                    {format(new Date(selectedAlert.timestamp), "PPpp")}
-                  </p>
-                </div>
+                  {/* Network Info */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2">
+                        <Globe className="h-4 w-4 text-muted-foreground" />
+                        <CardTitle className="text-sm font-medium">Network Information</CardTitle>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Source IP</span>
+                        <div className="flex items-center gap-2">
+                          <code className="bg-muted px-2 py-1 rounded text-sm font-mono">
+                            {selectedAlert.source_ip}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => copyToClipboard(selectedAlert.source_ip)}
+                          >
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => router.push(`/search?q=${selectedAlert.source_ip}`)}
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Destination IP</span>
+                        <div className="flex items-center gap-2">
+                          <code className="bg-muted px-2 py-1 rounded text-sm font-mono">
+                            {selectedAlert.dest_ip}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => copyToClipboard(selectedAlert.dest_ip)}
+                          >
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
 
-                {(selectedAlert.incident_id || selectedAlert.investigation_id) && (
-                  <div className="border-t pt-4">
-                    <h4 className="mb-3 text-sm font-medium text-muted-foreground">
-                      Related Items
-                    </h4>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedAlert.incident_id && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            router.push(`/incidents/${selectedAlert.incident_id}`)
-                          }
-                        >
-                          <ExternalLink className="mr-2 h-4 w-4" />
-                          {selectedAlert.incident_id}
-                        </Button>
+                  {/* Host Info */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2">
+                        <Server className="h-4 w-4 text-muted-foreground" />
+                        <CardTitle className="text-sm font-medium">Host Information</CardTitle>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Hostname</span>
+                        <Badge variant="secondary">{selectedAlert.hostname}</Badge>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Source</span>
+                        <Badge variant="outline" className="capitalize">
+                          {selectedAlert.source}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Rule</span>
+                        <span className="text-sm font-medium">{selectedAlert.rule_name}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Tags */}
+                  {selectedAlert.tags && selectedAlert.tags.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center gap-2">
+                          <Tag className="h-4 w-4 text-muted-foreground" />
+                          <CardTitle className="text-sm font-medium">Tags</CardTitle>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedAlert.tags.map((tag, index) => (
+                            <Badge key={index} variant="secondary" className="text-xs">
+                              {tag}
+                            </Badge>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="iocs" className="space-y-4 mt-4">
+                  {/* IP Indicators */}
+                  {selectedAlert.iocs?.ips && selectedAlert.iocs.ips.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">IP Addresses</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-2">
+                          {selectedAlert.iocs.ips.map((ip, index) => (
+                            <div key={index} className="flex items-center justify-between">
+                              <code className="bg-muted px-2 py-1 rounded text-sm font-mono">
+                                {ip}
+                              </code>
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => copyToClipboard(ip)}
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => router.push(`/search?q=${ip}`)}
+                                >
+                                  <ExternalLink className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Hashes */}
+                  {selectedAlert.iocs?.hashes && selectedAlert.iocs.hashes.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">File Hashes</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-2">
+                          {selectedAlert.iocs.hashes.map((hash, index) => (
+                            <div key={index} className="flex items-center justify-between">
+                              <code className="bg-muted px-2 py-1 rounded text-xs font-mono truncate max-w-[300px]">
+                                {hash}
+                              </code>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => copyToClipboard(hash)}
+                              >
+                                <Copy className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Domains */}
+                  {selectedAlert.iocs?.domains && selectedAlert.iocs.domains.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium">Domains</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-2">
+                          {selectedAlert.iocs.domains.map((domain, index) => (
+                            <div key={index} className="flex items-center justify-between">
+                              <code className="bg-muted px-2 py-1 rounded text-sm font-mono">
+                                {domain}
+                              </code>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => copyToClipboard(domain)}
+                              >
+                                <Copy className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Empty state */}
+                  {(!selectedAlert.iocs ||
+                    (selectedAlert.iocs.ips.length === 0 &&
+                      selectedAlert.iocs.hashes.length === 0 &&
+                      selectedAlert.iocs.domains.length === 0 &&
+                      selectedAlert.iocs.urls.length === 0)) && (
+                    <Card>
+                      <CardContent className="py-8 text-center">
+                        <AlertTriangle className="mx-auto h-8 w-8 text-muted-foreground/50" />
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          No IOCs extracted from this alert
+                        </p>
+                      </CardContent>
+                    </Card>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="related" className="space-y-4 mt-4">
+                  {/* Related Incidents */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm font-medium">Related Incidents</CardTitle>
+                        <Badge variant="secondary">{relationships?.incidents?.count || 0}</Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      {relationships?.incidents?.items &&
+                      relationships.incidents.items.length > 0 ? (
+                        <div className="space-y-2">
+                          {relationships.incidents.items.map((incident) => (
+                            <div
+                              key={incident.id}
+                              className="flex items-center justify-between p-2 rounded-lg border bg-card hover:bg-accent/50 cursor-pointer"
+                              onClick={() => router.push(`/incidents/${incident.id}`)}
+                            >
+                              <span className="text-sm truncate max-w-[350px]">
+                                {incident.title}
+                              </span>
+                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          No related incidents found
+                        </p>
                       )}
-                      {selectedAlert.investigation_id && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            router.push(
-                              `/investigations/${selectedAlert.investigation_id}`
-                            )
-                          }
-                        >
-                          <ExternalLink className="mr-2 h-4 w-4" />
-                          {selectedAlert.investigation_id}
-                        </Button>
+                    </CardContent>
+                  </Card>
+
+                  {/* Similar Alerts */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm font-medium">Similar Alerts</CardTitle>
+                        <Badge variant="secondary">{relationships?.similar?.count || 0}</Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      {relationships?.similar?.items &&
+                      relationships.similar.items.length > 0 ? (
+                        <div className="space-y-2">
+                          {relationships.similar.items.map((alert) => (
+                            <div
+                              key={alert.id}
+                              className="flex items-center justify-between p-2 rounded-lg border bg-card hover:bg-accent/50 cursor-pointer"
+                              onClick={() => setSelectedAlertId(alert.id)}
+                            >
+                              <code className="text-sm font-mono">{alert.source_ip}</code>
+                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                          ))}
+                          {relationships.similar.count > relationships.similar.items.length && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full mt-2"
+                              onClick={() =>
+                                router.push(`/alerts?source_ip=${selectedAlert.source_ip}`)
+                              }
+                            >
+                              View all {relationships.similar.count} similar alerts
+                            </Button>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No similar alerts found</p>
                       )}
-                    </div>
-                  </div>
-                )}
-              </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </Tabs>
             </>
-          )}
+          ) : null}
         </SheetContent>
       </Sheet>
     </div>

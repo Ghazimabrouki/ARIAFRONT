@@ -4,8 +4,8 @@ import { useState, useCallback } from "react";
 import useSWR from "swr";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
-import { X, AlertTriangle, ArrowRight } from "lucide-react";
-import { incidentsAPI, type Incident, type PaginatedResponse } from "@/lib/api";
+import { X, AlertTriangle, ArrowRight, Tag, User } from "lucide-react";
+import { incidentsAPI, type Incident, type IncidentListResponse } from "@/lib/api";
 import { useWSSubscription, type WSMessage } from "@/lib/websocket";
 import { PageHeader } from "@/components/page-header";
 import { DataTable } from "@/components/data-table";
@@ -24,13 +24,8 @@ import { Badge } from "@/components/ui/badge";
 // Mock data for demonstration
 const mockIncidents: Incident[] = Array.from({ length: 15 }, (_, i) => ({
   id: `incident-${i + 1}`,
-  incident_id: `INC-2024-${String(i + 1).padStart(4, "0")}`,
-  created_at: new Date(Date.now() - i * 3600000).toISOString(),
-  updated_at: new Date(Date.now() - i * 1800000).toISOString(),
-  status: (["open", "investigating", "resolved", "closed"] as const)[i % 4],
-  severity: (["critical", "high", "medium", "low"] as const)[i % 4],
   title: [
-    "Brute Force Attack on SSH Service",
+    "ET SCAN Potential SSH Scan - 172.104.13.54 on ghazi",
     "Data Exfiltration Attempt Detected",
     "Malware Infection on Production Server",
     "Unauthorized Access to Admin Panel",
@@ -40,15 +35,25 @@ const mockIncidents: Incident[] = Array.from({ length: 15 }, (_, i) => ({
     "Suspicious Container Activity",
   ][i % 8],
   description: "Multiple correlated alerts indicate a potential security incident requiring investigation.",
+  severity: (["critical", "high", "medium", "low"] as const)[i % 4],
+  status: (["open", "closed"] as const)[i % 2],
+  assigned_to: i % 3 === 0 ? "user-1" : null,
+  assigned_username: i % 3 === 0 ? "admin" : null,
+  tags: [
+    ["source-suricata", "ssh", "brute-force"],
+    ["wazuh", "file-integrity"],
+    ["falco", "container-escape"],
+    ["auth-failure"],
+  ][i % 4],
   alert_count: Math.floor(Math.random() * 20) + 3,
-  investigation_id: i % 2 === 0 ? `INV-2024-${String(i).padStart(4, "0")}` : undefined,
+  closed_at: i % 2 === 1 ? new Date(Date.now() - i * 1000000).toISOString() : null,
+  created_at: new Date(Date.now() - i * 3600000).toISOString(),
+  updated_at: new Date(Date.now() - i * 1800000).toISOString(),
 }));
 
 const statusOptions = [
   { value: "all", label: "All Statuses" },
   { value: "open", label: "Open" },
-  { value: "investigating", label: "Investigating" },
-  { value: "resolved", label: "Resolved" },
   { value: "closed", label: "Closed" },
 ];
 
@@ -63,17 +68,18 @@ const severityOptions = [
 export default function IncidentsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [page, setPage] = useState(1);
+  const [offset, setOffset] = useState(0);
   const [status, setStatus] = useState(searchParams.get("status") || "all");
   const [severity, setSeverity] = useState(searchParams.get("severity") || "all");
+  const limit = 20;
 
-  const { data, error, isLoading, mutate } = useSWR<PaginatedResponse<Incident>>(
-    ["incidents", page, status, severity],
+  const { data, error, isLoading, mutate } = useSWR<IncidentListResponse>(
+    ["incidents", offset, status, severity],
     () =>
       incidentsAPI
         .list({
-          page,
-          page_size: 20,
+          limit,
+          offset,
           status: status !== "all" ? status : undefined,
           severity: severity !== "all" ? severity : undefined,
         })
@@ -86,11 +92,10 @@ export default function IncidentsPage() {
             filtered = filtered.filter((i) => i.severity === severity);
           }
           return {
-            items: filtered.slice((page - 1) * 20, page * 20),
+            incidents: filtered.slice(offset, offset + limit),
             total: filtered.length,
-            page,
-            page_size: 20,
-            total_pages: Math.ceil(filtered.length / 20),
+            limit,
+            offset,
           };
         }),
     { refreshInterval: 30000 }
@@ -103,33 +108,41 @@ export default function IncidentsPage() {
   useWSSubscription("incident_created", handleWSUpdate);
   useWSSubscription("incident_updated", handleWSUpdate);
 
-  const incidents = data?.items || [];
-  const totalPages = data?.total_pages || 1;
+  const incidents = data?.incidents || [];
+  const total = data?.total || 0;
+  const totalPages = Math.ceil(total / limit);
+  const currentPage = Math.floor(offset / limit) + 1;
+
+  const handlePageChange = (page: number) => {
+    setOffset((page - 1) * limit);
+  };
 
   const columns = [
     {
       key: "severity",
       header: "Severity",
       cell: (incident: Incident) => <SeverityBadge severity={incident.severity} />,
-      className: "w-24",
-    },
-    {
-      key: "id",
-      header: "Incident ID",
-      cell: (incident: Incident) => (
-        <span className="font-mono text-sm">{incident.incident_id}</span>
-      ),
-      className: "w-36",
+      className: "w-28",
     },
     {
       key: "title",
-      header: "Title",
+      header: "Incident",
       cell: (incident: Incident) => (
         <div className="max-w-md">
           <p className="truncate font-medium">{incident.title}</p>
-          <p className="text-xs text-muted-foreground line-clamp-1">
-            {incident.description}
-          </p>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            {incident.tags?.slice(0, 2).map((tag, index) => (
+              <Badge key={index} variant="secondary" className="text-xs">
+                <Tag className="mr-1 h-2 w-2" />
+                {tag}
+              </Badge>
+            ))}
+            {incident.tags && incident.tags.length > 2 && (
+              <span className="text-xs text-muted-foreground">
+                +{incident.tags.length - 2}
+              </span>
+            )}
+          </div>
         </div>
       ),
     },
@@ -137,7 +150,7 @@ export default function IncidentsPage() {
       key: "status",
       header: "Status",
       cell: (incident: Incident) => <StatusBadge status={incident.status} />,
-      className: "w-32",
+      className: "w-28",
     },
     {
       key: "alerts",
@@ -149,6 +162,21 @@ export default function IncidentsPage() {
         </div>
       ),
       className: "w-20",
+    },
+    {
+      key: "assignee",
+      header: "Assignee",
+      cell: (incident: Incident) => (
+        incident.assigned_username ? (
+          <div className="flex items-center gap-1.5">
+            <User className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-sm">{incident.assigned_username}</span>
+          </div>
+        ) : (
+          <span className="text-sm text-muted-foreground">Unassigned</span>
+        )
+      ),
+      className: "w-28",
     },
     {
       key: "created",
@@ -169,7 +197,7 @@ export default function IncidentsPage() {
           size="sm"
           onClick={(e) => {
             e.stopPropagation();
-            router.push(`/incidents/${incident.incident_id}`);
+            router.push(`/incidents/${incident.id}`);
           }}
         >
           View
@@ -183,7 +211,7 @@ export default function IncidentsPage() {
   const clearFilters = () => {
     setStatus("all");
     setSeverity("all");
-    setPage(1);
+    setOffset(0);
   };
 
   const hasFilters = status !== "all" || severity !== "all";
@@ -197,7 +225,7 @@ export default function IncidentsPage() {
         isLoading={isLoading}
         actions={
           <div className="flex items-center gap-2">
-            <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
+            <Select value={status} onValueChange={(v) => { setStatus(v); setOffset(0); }}>
               <SelectTrigger className="w-36">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
@@ -209,7 +237,7 @@ export default function IncidentsPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={severity} onValueChange={(v) => { setSeverity(v); setPage(1); }}>
+            <Select value={severity} onValueChange={(v) => { setSeverity(v); setOffset(0); }}>
               <SelectTrigger className="w-36">
                 <SelectValue placeholder="Severity" />
               </SelectTrigger>
@@ -235,10 +263,10 @@ export default function IncidentsPage() {
         <DataTable
           columns={columns}
           data={incidents}
-          page={page}
+          page={currentPage}
           totalPages={totalPages}
-          onPageChange={setPage}
-          onRowClick={(incident) => router.push(`/incidents/${incident.incident_id}`)}
+          onPageChange={handlePageChange}
+          onRowClick={(incident) => router.push(`/incidents/${incident.id}`)}
           isLoading={isLoading}
           emptyMessage="No incidents found"
         />

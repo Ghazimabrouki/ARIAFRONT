@@ -18,6 +18,7 @@ import {
   Moon,
   Sun,
   Monitor,
+  Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -36,11 +37,12 @@ const navigation = [
   { name: "Alerts", href: "/alerts", icon: AlertTriangle },
   { name: "Incidents", href: "/incidents", icon: FileWarning },
   { name: "Investigations", href: "/investigations", icon: Search },
+  { name: "AI Assistant", href: "/assistant", icon: Bot },
+  { name: "IPS Map", href: "/ips", icon: Globe },
+  { name: "Performance", href: "/metrics", icon: Activity },
   { name: "Archives", href: "/archives", icon: Archive },
-  { name: "Metrics", href: "/metrics", icon: Activity },
   { name: "Monitoring", href: "/monitoring", icon: Server },
   { name: "Pipeline", href: "/pipeline", icon: Workflow },
-  { name: "AI Assistant", href: "/assistant", icon: Bot },
 ];
 
 export function AppSidebar() {
